@@ -1,19 +1,44 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
-	//"k8s.io/client-go/kubernetes"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 
 	"github.com/jetstack/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/jetstack/cert-manager/pkg/acme/webhook/cmd"
+	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
+	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
 )
 
+// GroupName is the API group name (should be unique cluster-wide)
 var GroupName = os.Getenv("GROUP_NAME")
+
+const (
+	// DefaultTTL is the TTL that will be set with Present
+	DefaultTTL = 300
+)
+
+type actionType int
+
+const (
+	actionPresent actionType = iota
+	actionCleanup
+)
+
+var actionNames = map[actionType]string{
+	actionPresent: "Present",
+	actionCleanup: "Cleanup",
+}
 
 func main() {
 	if GroupName == "" {
@@ -26,46 +51,26 @@ func main() {
 	// webhook, where the Name() method will be used to disambiguate between
 	// the different implementations.
 	cmd.RunWebhookServer(GroupName,
-		&customDNSProviderSolver{},
+		&infomaniakDNSProviderSolver{},
 	)
+
 }
 
-// customDNSProviderSolver implements the provider-specific logic needed to
+// infomaniakDNSProviderSolver implements the provider-specific logic needed to
 // 'present' an ACME challenge TXT record for your own DNS provider.
 // To do so, it must implement the `github.com/jetstack/cert-manager/pkg/acme/webhook.Solver`
 // interface.
-type customDNSProviderSolver struct {
-	// If a Kubernetes 'clientset' is needed, you must:
-	// 1. uncomment the additional `client` field in this structure below
-	// 2. uncomment the "k8s.io/client-go/kubernetes" import at the top of the file
-	// 3. uncomment the relevant code in the Initialize method below
-	// 4. ensure your webhook's service account has the required RBAC role
-	//    assigned to it for interacting with the Kubernetes APIs you need.
-	//client kubernetes.Clientset
+type infomaniakDNSProviderSolver struct {
+	client kubernetes.Clientset
 }
 
-// customDNSProviderConfig is a structure that is used to decode into when
+// infomaniakDNSProviderConfig is a structure that is used to decode into when
 // solving a DNS01 challenge.
 // This information is provided by cert-manager, and may be a reference to
 // additional configuration that's needed to solve the challenge for this
 // particular certificate or issuer.
-// This typically includes references to Secret resources containing DNS
-// provider credentials, in cases where a 'multi-tenant' DNS solver is being
-// created.
-// If you do *not* require per-issuer or per-certificate configuration to be
-// provided to your webhook, you can skip decoding altogether in favour of
-// using CLI flags or similar to provide configuration.
-// You should not include sensitive information here. If credentials need to
-// be used by your provider here, you should reference a Kubernetes Secret
-// resource and fetch these credentials using a Kubernetes clientset.
-type customDNSProviderConfig struct {
-	// Change the two fields below according to the format of the configuration
-	// to be decoded.
-	// These fields will be set by users in the
-	// `issuer.spec.acme.dns01.providers.webhook.config` field.
-
-	//Email           string `json:"email"`
-	//APIKeySecretRef v1alpha1.SecretKeySelector `json:"apiKeySecretRef"`
+type infomaniakDNSProviderConfig struct {
+	APITokenSecretRef cmmeta.SecretKeySelector `json:"apiTokenSecretRef"`
 }
 
 // Name is used as the name for this DNS solver when referencing it on the ACME
@@ -74,8 +79,8 @@ type customDNSProviderConfig struct {
 // solvers configured with the same Name() **so long as they do not co-exist
 // within a single webhook deployment**.
 // For example, `cloudflare` may be used as the name of a solver.
-func (c *customDNSProviderSolver) Name() string {
-	return "my-custom-solver"
+func (c *infomaniakDNSProviderSolver) Name() string {
+	return "infomaniak"
 }
 
 // Present is responsible for actually presenting the DNS record with the
@@ -83,16 +88,14 @@ func (c *customDNSProviderSolver) Name() string {
 // This method should tolerate being called multiple times with the same value.
 // cert-manager itself will later perform a self check to ensure that the
 // solver has correctly configured the DNS provider.
-func (c *customDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
-	cfg, err := loadConfig(ch.Config)
+func (c *infomaniakDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
+	err := c.do(ch, actionPresent)
 	if err != nil {
+		klog.Errorf("Error while presenting record `%s`: %v", ch.ResolvedFQDN, err)
+		klog.Flush()
 		return err
 	}
-
-	// TODO: do something more useful with the decoded configuration
-	fmt.Printf("Decoded configuration %v", cfg)
-
-	// TODO: add code that sets a record in the DNS provider's console
+	klog.Flush()
 	return nil
 }
 
@@ -102,8 +105,69 @@ func (c *customDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 // value provided on the ChallengeRequest should be cleaned up.
 // This is in order to facilitate multiple DNS validations for the same domain
 // concurrently.
-func (c *customDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
-	// TODO: add code that deletes a record from the DNS provider's console
+func (c *infomaniakDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
+	err := c.do(ch, actionCleanup)
+	if err != nil {
+		klog.Errorf("Error while cleaning record `%s`: %v", ch.ResolvedFQDN, err)
+		klog.Flush()
+		return err
+	}
+	klog.Flush()
+	return nil
+}
+
+// getSecretKey fetch a secret key based on a selector and a namespace
+func (c *infomaniakDNSProviderSolver) getSecretKey(secret cmmeta.SecretKeySelector, namespace string) (string, error) {
+	klog.V(6).Infof("getting key `%s` in secret `%s/%s`", secret.Key, namespace, secret.Name)
+
+	sec, err := c.client.CoreV1().Secrets(namespace).Get(context.Background(), secret.Name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("secret `%s/%s` not found", namespace, secret.Name)
+	}
+
+	data, ok := sec.Data[secret.Key]
+	if !ok {
+		return "", fmt.Errorf("key `%q` not found in secret `%s/%s`", secret.Key, namespace, secret.Name)
+	}
+
+	return string(data), nil
+}
+
+// do is where the job is actually done (Present/CleanUp)
+func (c *infomaniakDNSProviderSolver) do(ch *v1alpha1.ChallengeRequest, action actionType) error {
+	cfg, err := loadConfig(ch.Config)
+	if err != nil {
+		return err
+	}
+
+	klog.V(2).Infof("%s record `%s`", actionNames[action], ch.ResolvedFQDN)
+	zone := util.UnFqdn(ch.ResolvedZone)
+	source := util.UnFqdn(ch.ResolvedFQDN)
+	target := ch.Key
+	ttl := uint64(DefaultTTL)
+
+	apiToken, err := c.getSecretKey(cfg.APITokenSecretRef, ch.ResourceNamespace)
+	if err != nil {
+		return err
+	}
+
+	ikAPI := NewInfomaniakAPI(apiToken)
+	domain, err := ikAPI.GetDomainByName(zone)
+	if err != nil {
+		return err
+	}
+
+	if strings.HasSuffix(source, domain.CustomerName) {
+		source = source[:len(source)-len(domain.CustomerName)-1]
+	}
+
+	switch action {
+	case actionPresent:
+		return ikAPI.EnsureDNSRecord(domain, source, target, "TXT", ttl)
+	case actionCleanup:
+		return ikAPI.RemoveDNSRecord(domain, source, target, "TXT")
+	}
+
 	return nil
 }
 
@@ -116,25 +180,21 @@ func (c *customDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 // provider accounts.
 // The stopCh can be used to handle early termination of the webhook, in cases
 // where a SIGTERM or similar signal is sent to the webhook process.
-func (c *customDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
-	///// UNCOMMENT THE BELOW CODE TO MAKE A KUBERNETES CLIENTSET AVAILABLE TO
-	///// YOUR CUSTOM DNS PROVIDER
+func (c *infomaniakDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
+	cl, err := kubernetes.NewForConfig(kubeClientConfig)
+	if err != nil {
+		return err
+	}
 
-	//cl, err := kubernetes.NewForConfig(kubeClientConfig)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//c.client = cl
+	c.client = *cl
 
-	///// END OF CODE TO MAKE KUBERNETES CLIENTSET AVAILABLE
 	return nil
 }
 
 // loadConfig is a small helper function that decodes JSON configuration into
 // the typed config struct.
-func loadConfig(cfgJSON *extapi.JSON) (customDNSProviderConfig, error) {
-	cfg := customDNSProviderConfig{}
+func loadConfig(cfgJSON *extapi.JSON) (infomaniakDNSProviderConfig, error) {
+	cfg := infomaniakDNSProviderConfig{}
 	// handle the 'base case' where no configuration has been provided
 	if cfgJSON == nil {
 		return cfg, nil

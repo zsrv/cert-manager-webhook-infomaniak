@@ -1,54 +1,108 @@
-# ACME webhook example
+# Infomaniak ACME webhook
 
-The ACME issuer type supports an optional 'webhook' solver, which can be used
-to implement custom DNS01 challenge solving logic.
+A cert-manager webhook that speaks Infomaniak's API fluently
 
-This is useful if you need to use cert-manager with a DNS provider that is not
-officially supported in cert-manager core.
+## Install
 
-## Why not in core?
+1. Deploy cert-manager (if needed)
+    ```
+    $ kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.0.1/cert-manager.yaml
+    ```
 
-As the project & adoption has grown, there has been an influx of DNS provider
-pull requests to our core codebase. As this number has grown, the test matrix
-has become un-maintainable and so, it's not possible for us to certify that
-providers work to a sufficient level.
+1. Deploy Infomaniak webhook
+    ```
+    $ kubectl apply -f https://github.com/infomaniak/cert-manager-webhook-infomaniak/releases/download/v0.1.0/rendered-manifest.yaml
+    ```
 
-By creating this 'interface' between cert-manager and DNS providers, we allow
-users to quickly iterate and test out new integrations, and then packaging
-those up themselves as 'extensions' to cert-manager.
+1. Create a Secret with your API token
+    ```
+    $ cat <<EOF | kubectl apply -n cert-manager -f -
+    ---
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: infomaniak-api-credentials
+    type: Opaque
+    data:
+      api-token: $(echo -n $INFOMANIAK_TOKEN|base64 -w0)
+    EOF
+    ```
 
-We can also then provide a standardised 'testing framework', or set of
-conformance tests, which allow us to validate the a DNS provider works as
-expected.
+1. Create a Secret with your staging ACME private key
+    ```
+    $ cat <<EOF | kubectl apply -f -
+    ---
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: le-staging-account-key
+      namespace: cert-manager
+    type: Opaque
+    data:
+      tls.key: <<YOUR_KEY_BASE64>>
+    EOF
+    ```
 
-## Creating your own webhook
 
-Webhook's themselves are deployed as Kubernetes API services, in order to allow
-administrators to restrict access to webhooks with Kubernetes RBAC.
+1. Create a staging ClusterIssuer
+    ```
+    $ cat <<EOF | kubectl apply -f -
+    ---
+    apiVersion: cert-manager.io/v1
+    kind: ClusterIssuer
+    metadata:
+      name: letsencrypt-staging
+    spec:
+      acme:
+        email: acme@example.com
+        privateKeySecretRef:
+          name: le-staging-account-key
+        server: https://acme-staging-v02.api.letsencrypt.org/directory
+        solvers:
+        - selector: {}
+          dns01:
+            webhook:
+              groupName: acme.infomaniak.com
+              solverName: infomaniak
+              config:
+                apiTokenSecretRef:
+                  name: infomaniak-api-credentials
+                  key: api-token
+    EOF
+    ```
 
-This is important, as otherwise it'd be possible for anyone with access to your
-webhook to complete ACME challenge validations and obtain certificates.
+1. Create a Certificate, the issued cert will be stored in the specified Secret (keys tls.crt & tls.key)
+    ```
+    $ cat <<EOF | kubectl apply -f -
+    ---
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: test-example-com
+    spec:
+      secretName: test-example-com-tls
+      issuerRef:
+        name: letsencrypt-staging
+        kind: ClusterIssuer
+      dnsNames:
+      - test.example.com
+    EOF
 
-To make the set up of these webhook's easier, we provide a template repository
-that can be used to get started quickly.
+    $ kubectl get secret test-example-com-tls -o json | jq -r '.data."tls.crt"' | base64 -d | openssl x509 -text -noout | grep Subject:
+        Subject: CN = test.example.com
+    ```
 
-### Creating your own repository
+1. If everything worked as expected in staging, repeat the 3 last steps with your production ACME email, key & url
 
-### Running the test suite
+
+
+## Building
+
+Run `make build`
+
+## Running the test suite
 
 All DNS providers **must** run the DNS01 provider conformance testing suite,
 else they will have undetermined behaviour when used with cert-manager.
 
-**It is essential that you configure and run the test suite when creating a
-DNS01 webhook.**
-
-An example Go test file has been provided in [main_test.go]().
-
-You can run the test suite with:
-
-```bash
-$ TEST_ZONE_NAME=example.com go test .
-```
-
-The example file has a number of areas you must fill in and replace with your
-own options in order for tests to pass.
+You can run the test suite by exporting your API token in `INFOMANIAK_TOKEN`, then by running `TEST_ZONE_NAME=example.com. make test`
