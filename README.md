@@ -28,7 +28,8 @@ A cert-manager webhook that speaks Infomaniak's API fluently
     EOF
     ```
 
-1. Create a Secret with your staging ACME private key
+1. Create a Secret with your staging ACME private key (if you don't have one, the next step will generate one)
+
     ```
     $ cat <<EOF | kubectl apply -f -
     ---
