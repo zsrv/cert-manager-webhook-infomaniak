@@ -11,7 +11,7 @@ A cert-manager webhook that speaks Infomaniak's API fluently
 
 1. Deploy Infomaniak webhook
     ```
-    $ kubectl apply -f https://github.com/infomaniak/cert-manager-webhook-infomaniak/releases/download/v0.1.0/rendered-manifest.yaml
+    $ kubectl apply -f https://github.com/infomaniak/cert-manager-webhook-infomaniak/releases/download/v0.2.0/rendered-manifest.yaml
     ```
 
 1. Create a Secret with your API token
