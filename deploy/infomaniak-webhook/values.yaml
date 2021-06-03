@@ -13,7 +13,7 @@ certManager:
   serviceAccountName: cert-manager
 
 image:
-  repository: webhook
+  repository: ghcr.io/infomaniak/cert-manager-webhook-infomaniak
   tag: latest
   pullPolicy: IfNotPresent
   pullSecret: gitlab-registry
