@@ -12,11 +12,19 @@ certManager:
   namespace: cert-manager
   serviceAccountName: cert-manager
 
+# used to add a namespace declaration to the static manifest,
+# prefer `--create-namespaces` with `helm install` >= 3.2
+# see https://github.com/helm/helm/issues/6794
+createReleaseNamespace: false
+
+replicaCount: 1
+
 image:
-  repository: webhook
+  repository: ghcr.io/infomaniak/cert-manager-webhook-infomaniak
   tag: latest
   pullPolicy: IfNotPresent
-  pullSecret: gitlab-registry
+
+imagePullSecret: []
 
 nameOverride: ""
 fullnameOverride: ""

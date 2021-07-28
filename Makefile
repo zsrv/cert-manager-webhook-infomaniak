@@ -41,4 +41,5 @@ rendered-manifest.yaml:
 		--namespace $(NAMESPACE) \
 		--set image.repository=$(IMAGE_NAME) \
 		--set image.tag=$(IMAGE_TAG) \
+		--set createReleaseNamespace=true \
 		deploy/infomaniak-webhook > "deploy/rendered-manifest.yaml"
