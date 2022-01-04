@@ -1,8 +1,7 @@
 # Infomaniak ACME webhook
 
-A cert-manager webhook that speaks Infomaniak's API fluently
-
-## Install
+A cert-manager webhook which works with domains handled by [Infomaniak](https://www.infomaniak.com), a 🇨🇭 Swiss hosting provider
+## Quick start
 
 1. Deploy cert-manager (if needed)
     ```
@@ -14,14 +13,15 @@ A cert-manager webhook that speaks Infomaniak's API fluently
     $ kubectl apply -f https://github.com/infomaniak/cert-manager-webhook-infomaniak/releases/download/v0.2.0/rendered-manifest.yaml
     ```
 
-1. Create a Secret with your API token
+1. Create a Secret with your Infomaniak API token. You can generate a new one by [clicking here](https://manager.infomaniak.com/v3/infomaniak-api). You need to have at least the `Domain` scope.
     ```
-    $ cat <<EOF | kubectl apply -n cert-manager -f -
+    $ cat <<EOF | kubectl apply -f -
     ---
     apiVersion: v1
     kind: Secret
     metadata:
       name: infomaniak-api-credentials
+      namespace: cert-manager
     type: Opaque
     data:
       api-token: $(echo -n $INFOMANIAK_TOKEN|base64 -w0)
@@ -93,9 +93,12 @@ A cert-manager webhook that speaks Infomaniak's API fluently
         Subject: CN = test.example.com
     ```
 
-1. If everything worked as expected in staging, repeat the 3 last steps with your production ACME email, key & url
+1. If everything worked as expected using letsencrypt staging environment, repeat the 3 last steps using letsencrypt's prod environment
+    - ClusterIssuer `.spec.acme.server`: `https://acme-v02.api.letsencrypt.org`
+    - ClusterIssuer `.spec.acme.email`: your "prod" e-mail address
+    - ClusterIssuer `.spec.acme.privateKeySecretRef`: you can leave it blank and a new one will be generated for you
 
-
+1. Have fun 🎉 !
 
 ## Building
 
