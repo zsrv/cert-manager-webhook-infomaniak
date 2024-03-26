@@ -94,7 +94,7 @@ A cert-manager webhook which works with domains handled by [Infomaniak](https://
     ```
 
 1. If everything worked as expected using letsencrypt staging environment, repeat the 3 last steps using letsencrypt's prod environment
-    - ClusterIssuer `.spec.acme.server`: `https://acme-v02.api.letsencrypt.org`
+    - ClusterIssuer `.spec.acme.server`: `https://acme-v02.api.letsencrypt.org/directory`
     - ClusterIssuer `.spec.acme.email`: your "prod" e-mail address
     - ClusterIssuer `.spec.acme.privateKeySecretRef`: you can leave it blank and a new one will be generated for you
 
