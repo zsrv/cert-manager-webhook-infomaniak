@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/base64"
 	"errors"
-	"io/ioutil"
 	"os"
 	"testing"
 	"text/template"
@@ -55,7 +54,7 @@ func createConfig() error {
 	}
 }
 `)
-	err := ioutil.WriteFile(manifestPath+"/config.json", config, 0644)
+	err := os.WriteFile(manifestPath+"/config.json", config, 0644)
 	if err != nil {
 		return err
 	}
