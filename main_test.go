@@ -8,12 +8,11 @@ import (
 	"testing"
 	"text/template"
 
-	"github.com/jetstack/cert-manager/test/acme/dns"
+	acmetest "github.com/cert-manager/cert-manager/test/acme"
 )
 
 var (
 	testZoneName = os.Getenv("TEST_ZONE_NAME")
-	binariesPath = "_out/kubebuilder/bin"
 	manifestPath = "testdata/infomaniak"
 )
 
@@ -83,11 +82,10 @@ func runTestSuite(t *testing.T, zone string) {
 		t.Fatal(err)
 	}
 
-	fixture := dns.NewFixture(&infomaniakDNSProviderSolver{},
-		dns.SetBinariesPath(binariesPath),
-		dns.SetResolvedZone(zone),
-		dns.SetAllowAmbientCredentials(false),
-		dns.SetManifestPath(manifestPath),
+	fixture := acmetest.NewFixture(&infomaniakDNSProviderSolver{},
+		acmetest.SetResolvedZone(zone),
+		acmetest.SetAllowAmbientCredentials(false),
+		acmetest.SetManifestPath(manifestPath),
 	)
 
 	fixture.RunConformance(t)
